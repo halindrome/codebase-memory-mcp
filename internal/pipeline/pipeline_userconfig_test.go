@@ -41,15 +41,20 @@ function renderIndex() {
 		t.Fatalf("Pipeline.Run: %v", err)
 	}
 
-	nodes, err := s.AllNodes(p.ProjectName)
+	nodes, err := s.FindNodesByLabel(p.ProjectName, "File")
 	if err != nil {
-		t.Fatalf("AllNodes: %v", err)
+		t.Fatalf("FindNodesByLabel: %v", err)
 	}
 
 	for _, n := range nodes {
 		if strings.HasSuffix(n.FilePath, ".blade.php") {
-			return // found at least one node from the blade file
+			lang, _ := n.Properties["language"].(string)
+			if lang == "php" {
+				return // found a php File node for the blade file
+			}
+			t.Errorf("found .blade.php File node but language=%q, want php", lang)
+			return
 		}
 	}
-	t.Errorf("no node with .blade.php file path found; total nodes: %d", len(nodes))
+	t.Errorf("no File node with .blade.php path found; total File nodes: %d", len(nodes))
 }
