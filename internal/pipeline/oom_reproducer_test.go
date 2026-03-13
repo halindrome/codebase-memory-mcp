@@ -336,7 +336,7 @@ func TestOOMReproducer_AdaptivePool(t *testing.T) {
 	t.Logf("NumGC (final):      %d", final.NumGC)
 	t.Logf("Goroutine samples:  %d", goroutineSamples)
 	t.Logf("NumCPU:             %d", runtime.NumCPU())
-	t.Logf("Adaptive pool max:  %d (NumCPU × 8)", runtime.NumCPU()*8)
+	t.Logf("Adaptive pool max:  %d (NumCPU × 2)", runtime.NumCPU()*2)
 	if runErr != nil {
 		t.Logf("Pipeline error:     %v", runErr)
 	} else {

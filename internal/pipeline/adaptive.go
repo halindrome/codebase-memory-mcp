@@ -3,7 +3,9 @@ package pipeline
 import (
 	"context"
 	"log/slog"
+	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,7 +51,7 @@ type adaptivePool struct {
 	limit    int // current concurrency limit
 	active   int // currently running workers
 	minLimit int // floor (NumCPU)
-	maxLimit int // ceiling (NumCPU * 8)
+	maxLimit int // ceiling (NumCPU * 2 by default)
 	growStep int // additive increase per adjustment
 	numCPU   int
 
@@ -69,10 +71,20 @@ func newAdaptivePool(numCPU int) *adaptivePool {
 	if step < 2 {
 		step = 2
 	}
+	// Ceiling is numCPU * 2 by default.
+	// Each goroutine holds a live CBM FileResult (~5 MB); 2× gives enough
+	// parallelism for I/O overlap without blowing heap on large repos.
+	// Override with CODEBASE_POOL_MAX_MULTIPLIER env var (integer ≥ 1).
+	maxMultiplier := 2
+	if v := os.Getenv("CODEBASE_POOL_MAX_MULTIPLIER"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			maxMultiplier = n
+		}
+	}
 	p := &adaptivePool{
 		limit:     numCPU,
 		minLimit:  numCPU,
-		maxLimit:  numCPU * 8,
+		maxLimit:  numCPU * maxMultiplier,
 		growStep:  step,
 		numCPU:    numCPU,
 		startTime: time.Now(),
