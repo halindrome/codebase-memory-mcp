@@ -1091,6 +1091,8 @@ func (p *Pipeline) passDefinitions(files []discover.FileInfo) {
 
 	pool := newAdaptivePool(runtime.NumCPU())
 	go pool.monitor(p.ctx)
+	memWatcher := startMemPressureWatcher(p.ctx, pool)
+	defer memWatcher.stop()
 
 	var wg sync.WaitGroup
 	for i, f := range parseableFiles {
