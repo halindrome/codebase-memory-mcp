@@ -147,6 +147,18 @@ func ForLanguage(lang Language) *LanguageSpec {
 	return nil
 }
 
+// RegisterExtension maps a single file extension to an existing language's spec.
+// If no spec is registered for language, the call is a no-op.
+// ext must include the leading dot (e.g. ".blade.php").
+func RegisterExtension(ext string, language Language) {
+	for _, spec := range registry {
+		if spec.Language == language {
+			registry[ext] = spec
+			return
+		}
+	}
+}
+
 // LanguageForExtension returns the Language for a file extension.
 func LanguageForExtension(ext string) (Language, bool) {
 	spec := registry[ext]

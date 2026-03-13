@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/DeusData/codebase-memory-mcp/internal/httplink"
 	"github.com/DeusData/codebase-memory-mcp/internal/lang"
 	"github.com/DeusData/codebase-memory-mcp/internal/store"
+	"github.com/DeusData/codebase-memory-mcp/internal/userconfig"
 )
 
 // Pipeline orchestrates the 3-pass indexing of a repository.
@@ -176,6 +178,16 @@ func (p *Pipeline) Run() error {
 
 	if err := p.checkCancel(); err != nil {
 		return err
+	}
+
+	// Apply user-defined extra extension→language mappings from config files.
+	ucfg, ucfgErr := userconfig.Load(p.RepoPath)
+	if ucfgErr != nil {
+		log.Printf("[pipeline] warning: could not load user config: %v", ucfgErr)
+	} else {
+		for ext, langStr := range ucfg.ExtraExtensions {
+			lang.RegisterExtension(ext, lang.Language(langStr))
+		}
 	}
 
 	// Discover source files (filesystem, no DB — runs outside transaction)
