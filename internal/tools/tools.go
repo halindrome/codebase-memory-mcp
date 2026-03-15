@@ -803,12 +803,23 @@ func (s *Server) initMetricsTracker() {
 	if !enabled {
 		return
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		slog.Warn("metrics: cannot determine home dir, metrics disabled", "err", err)
-		return
+
+	// Check for a config-driven override (set by per-project install)
+	savingsPath := ""
+	if s.config != nil {
+		savingsPath = s.config.Get(store.ConfigMetricsPath, "")
 	}
-	savingsPath := filepath.Join(home, ".cache", "codebase-memory-mcp", "savings.json")
+
+	// Fall back to default global path
+	if savingsPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			slog.Warn("metrics: cannot determine home dir, metrics disabled", "err", err)
+			return
+		}
+		savingsPath = filepath.Join(home, ".cache", "codebase-memory-mcp", "savings.json")
+	}
+
 	s.metricsTracker = metrics.NewTracker(savingsPath)
 }
 

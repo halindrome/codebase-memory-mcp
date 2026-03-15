@@ -51,7 +51,15 @@ type Edge struct {
 }
 
 // cacheDir returns the default cache directory for databases.
+// Respects CODEBASE_MEMORY_DB_DIR environment variable; defaults to ~/.cache/codebase-memory-mcp.
 func cacheDir() (string, error) {
+	// Allow override for per-project installations
+	if envDir := os.Getenv("CODEBASE_MEMORY_DB_DIR"); envDir != "" {
+		if err := os.MkdirAll(envDir, 0o750); err != nil {
+			return "", fmt.Errorf("mkdir cache (from env): %w", err)
+		}
+		return envDir, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)

@@ -14,19 +14,57 @@ import (
 
 // installConfig holds settings for the install/uninstall commands.
 type installConfig struct {
-	dryRun bool
-	force  bool
+	dryRun  bool
+	force   bool
+	project string // absolute path for project-local install; empty = global
+}
+
+// claudeConfigDir returns the Claude Code configuration directory.
+// Respects the CLAUDE_CONFIG_DIR environment variable; defaults to ~/.claude.
+func claudeConfigDir() string {
+	if envDir := os.Getenv("CLAUDE_CONFIG_DIR"); envDir != "" {
+		return envDir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude")
 }
 
 func runInstall(args []string) int {
 	cfg := installConfig{}
-	for _, a := range args {
-		switch a {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--dry-run":
 			cfg.dryRun = true
 		case "--force":
 			cfg.force = true
+		case "--project":
+			// Optional path argument — use next arg if it doesn't start with --
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+				cfg.project = args[i+1]
+				i++
+			} else {
+				// No path given — use cwd
+				cwd, err := os.Getwd()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: cannot determine cwd: %v\n", err)
+					return 1
+				}
+				cfg.project = cwd
+			}
 		}
+	}
+
+	// Resolve relative project path to absolute
+	if cfg.project != "" && !filepath.IsAbs(cfg.project) {
+		abs, err := filepath.Abs(cfg.project)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: cannot resolve project path: %v\n", err)
+			return 1
+		}
+		cfg.project = abs
 	}
 
 	binaryPath, err := detectBinaryPath()
@@ -44,40 +82,47 @@ func runInstall(args []string) int {
 	// Skills (always installed — no CLI dependency)
 	installSkills(cfg)
 
-	// Claude Code MCP registration
-	if claudePath := findCLI("claude"); claudePath != "" {
-		fmt.Printf("[Claude Code] detected (%s)\n", claudePath)
-		registerClaudeCodeMCP(binaryPath, claudePath, cfg)
-	} else {
-		fmt.Println("[Claude Code] not found — skipping MCP registration")
+	// Project-local .mcp.json (only when --project is specified)
+	if cfg.project != "" {
+		writeProjectMCPJSON(cfg.project, binaryPath, cfg)
 	}
 
-	fmt.Println()
+	if cfg.project == "" {
+		// Claude Code MCP registration
+		if claudePath := findCLI("claude"); claudePath != "" {
+			fmt.Printf("[Claude Code] detected (%s)\n", claudePath)
+			registerClaudeCodeMCP(binaryPath, claudePath, cfg)
+		} else {
+			fmt.Println("[Claude Code] not found — skipping MCP registration")
+		}
 
-	// Codex CLI
-	if codexPath := findCLI("codex"); codexPath != "" {
-		fmt.Printf("[Codex CLI] detected (%s)\n", codexPath)
-		installCodex(binaryPath, codexPath, cfg)
-	} else {
-		fmt.Println("[Codex CLI] not found — skipping")
+		fmt.Println()
+
+		// Codex CLI
+		if codexPath := findCLI("codex"); codexPath != "" {
+			fmt.Printf("[Codex CLI] detected (%s)\n", codexPath)
+			installCodex(binaryPath, codexPath, cfg)
+		} else {
+			fmt.Println("[Codex CLI] not found — skipping")
+		}
+
+		fmt.Println()
+
+		// Cursor
+		installEditorMCP(binaryPath, cursorConfigPath(), "Cursor", cfg)
+
+		// Windsurf
+		installEditorMCP(binaryPath, windsurfConfigPath(), "Windsurf", cfg)
+
+		// Gemini CLI (same mcpServers format as Cursor/Windsurf)
+		installEditorMCP(binaryPath, geminiConfigPath(), "Gemini CLI", cfg)
+
+		// VS Code Copilot (uses "servers" key with "type" field)
+		installVSCodeMCP(binaryPath, vscodeConfigPath(), cfg)
+
+		// Zed (uses "context_servers" key with "source" field)
+		installZedMCP(binaryPath, zedConfigPath(), cfg)
 	}
-
-	fmt.Println()
-
-	// Cursor
-	installEditorMCP(binaryPath, cursorConfigPath(), "Cursor", cfg)
-
-	// Windsurf
-	installEditorMCP(binaryPath, windsurfConfigPath(), "Windsurf", cfg)
-
-	// Gemini CLI (same mcpServers format as Cursor/Windsurf)
-	installEditorMCP(binaryPath, geminiConfigPath(), "Gemini CLI", cfg)
-
-	// VS Code Copilot (uses "servers" key with "type" field)
-	installVSCodeMCP(binaryPath, vscodeConfigPath(), cfg)
-
-	// Zed (uses "context_servers" key with "source" field)
-	installZedMCP(binaryPath, zedConfigPath(), cfg)
 
 	fmt.Println("\nDone. Restart your editor/CLI to activate.")
 	return 0
@@ -219,18 +264,18 @@ func detectShellRC() string {
 	}
 }
 
-// installSkills writes the 4 skill files to ~/.claude/skills/ and removes old monolithic skill.
+// installSkills writes the 4 skill files to the Claude config skills dir and removes old monolithic skill.
 func installSkills(cfg installConfig) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Printf("  ⚠ Cannot determine home directory: %v\n", err)
+	configDir := claudeConfigDir()
+	if configDir == "" {
+		fmt.Printf("  ⚠ Cannot determine Claude config directory\n")
 		return
 	}
 
 	fmt.Println("[Skills]")
 
 	// Remove old monolithic skill if it exists
-	oldSkillDir := filepath.Join(home, ".claude", "skills", "codebase-memory-mcp")
+	oldSkillDir := filepath.Join(configDir, "skills", "codebase-memory-mcp")
 	if info, err := os.Stat(oldSkillDir); err == nil && info.IsDir() {
 		if cfg.dryRun {
 			fmt.Printf("  [dry-run] Would remove old skill: %s\n", oldSkillDir)
@@ -243,7 +288,7 @@ func installSkills(cfg installConfig) {
 
 	// Write 4 skill files
 	for name, content := range skillFiles {
-		skillDir := filepath.Join(home, ".claude", "skills", name)
+		skillDir := filepath.Join(configDir, "skills", name)
 		skillFile := filepath.Join(skillDir, "SKILL.md")
 
 		if !cfg.force {
@@ -359,14 +404,14 @@ func upsertCodexMCP(configFile, mcpSection, binaryPath string) error {
 
 // removeClaudeSkills removes all 4 skill directories.
 func removeClaudeSkills(cfg installConfig) {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	configDir := claudeConfigDir()
+	if configDir == "" {
 		return
 	}
 
 	fmt.Println("[Skills]")
 	for name := range skillFiles {
-		skillDir := filepath.Join(home, ".claude", "skills", name)
+		skillDir := filepath.Join(configDir, "skills", name)
 		if _, err := os.Stat(skillDir); os.IsNotExist(err) {
 			continue
 		}
@@ -380,6 +425,44 @@ func removeClaudeSkills(cfg installConfig) {
 			}
 		}
 	}
+}
+
+// writeProjectMCPJSON writes a project-local .mcp.json for Claude Code session-level registration.
+func writeProjectMCPJSON(projectDir, binaryPath string, cfg installConfig) {
+	configPath := filepath.Join(projectDir, ".mcp.json")
+	fmt.Printf("[Claude Code] Project-local MCP config: %s\n", configPath)
+
+	if cfg.dryRun {
+		fmt.Printf("  [dry-run] Would write project-local .mcp.json at %s\n", configPath)
+		return
+	}
+
+	// Read existing or start fresh
+	root := make(map[string]any)
+	if data, err := os.ReadFile(configPath); err == nil {
+		_ = json.Unmarshal(data, &root)
+	}
+
+	servers, ok := root["mcpServers"].(map[string]any)
+	if !ok {
+		servers = make(map[string]any)
+	}
+	servers[mcpServerKey] = map[string]any{
+		"command": binaryPath,
+		"args":    []string{},
+	}
+	root["mcpServers"] = servers
+
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		fmt.Printf("  ⚠ marshal JSON: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(configPath, append(out, '\n'), 0o600); err != nil {
+		fmt.Printf("  ⚠ write %s: %v\n", configPath, err)
+		return
+	}
+	fmt.Printf("  ✓ Project-local .mcp.json written\n")
 }
 
 // deregisterMCP removes the MCP server registration from a CLI.

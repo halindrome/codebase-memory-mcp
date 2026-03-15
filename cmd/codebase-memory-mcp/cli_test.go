@@ -51,8 +51,17 @@ func testCmd(t *testing.T, args ...string) *exec.Cmd {
 }
 
 // testEnvWithHome returns env vars with HOME (and USERPROFILE on Windows) set.
+// CLAUDE_CONFIG_DIR is stripped so that skills resolve under HOME/.claude.
 func testEnvWithHome(home string, extra ...string) []string {
-	env := append(os.Environ(), "HOME="+home)
+	base := os.Environ()
+	env := make([]string, 0, len(base)+2)
+	for _, e := range base {
+		if strings.HasPrefix(e, "CLAUDE_CONFIG_DIR=") {
+			continue // strip: tests expect paths under HOME/.claude
+		}
+		env = append(env, e)
+	}
+	env = append(env, "HOME="+home)
 	if runtime.GOOS == "windows" {
 		env = append(env, "USERPROFILE="+home)
 		// On Windows, DLL lookup uses PATH. Tests that replace PATH with an

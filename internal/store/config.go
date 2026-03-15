@@ -170,4 +170,10 @@ const (
 	// ConfigCustomPricePerToken is the USD cost per output token used when
 	// ConfigPricingModel is "custom". Example: 0.000015 for $15/M tokens.
 	ConfigCustomPricePerToken = "custom_price_per_token"
+
+	// ConfigMetricsPath overrides the default savings.json path for per-project installs.
+	// When set, token savings accumulate in this file instead of the global cache.
+	// Path may be absolute or relative (resolved from server working directory).
+	// Default: empty (uses ~/.cache/codebase-memory-mcp/savings.json).
+	ConfigMetricsPath = "metrics_path"
 )
