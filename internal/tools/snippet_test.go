@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DeusData/codebase-memory-mcp/internal/metrics"
 	"github.com/DeusData/codebase-memory-mcp/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -486,5 +487,47 @@ func TestSnippet_IncludeNeighbors_Enabled(t *testing.T) {
 	}
 	if !names["Run"] {
 		t.Error("expected Run in callee_names")
+	}
+}
+
+func TestGetCodeSnippet_MetaField(t *testing.T) {
+	srv := testSnippetServer(t)
+	// Attach a metricsTracker backed by a temp file.
+	savingsPath := filepath.Join(t.TempDir(), "savings.json")
+	srv.metricsTracker = metrics.NewTracker(savingsPath)
+
+	data := callSnippet(t, srv, "test-project.cmd.server.main.HandleRequest")
+
+	// Source should still be present.
+	if data["source"] == nil || data["source"] == "" {
+		t.Fatal("expected non-empty source")
+	}
+
+	// _meta must exist.
+	metaRaw, ok := data["_meta"]
+	if !ok {
+		t.Fatal("expected _meta field in response")
+	}
+	meta, ok := metaRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected _meta to be a map, got %T", metaRaw)
+	}
+
+	tokensSaved, _ := meta["tokens_saved"].(float64)
+	baselineTokens, _ := meta["baseline_tokens"].(float64)
+	responseTokens, _ := meta["response_tokens"].(float64)
+	compressionRatio, _ := meta["compression_ratio"].(float64)
+
+	if tokensSaved < 0 {
+		t.Errorf("tokens_saved should be >= 0, got %v", tokensSaved)
+	}
+	if baselineTokens <= 0 {
+		t.Errorf("baseline_tokens should be > 0, got %v", baselineTokens)
+	}
+	if responseTokens <= 0 {
+		t.Errorf("response_tokens should be > 0, got %v", responseTokens)
+	}
+	if compressionRatio <= 0 {
+		t.Errorf("compression_ratio should be > 0, got %v", compressionRatio)
 	}
 }

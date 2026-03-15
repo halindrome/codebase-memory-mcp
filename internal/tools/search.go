@@ -104,32 +104,45 @@ func (s *Server) handleSearchGraph(_ context.Context, req *mcp.CallToolRequest) 
 	}
 	s.addIndexStatus(responseData)
 
-	result := jsonResult(responseData)
-	// Token savings: baseline = sum of unique source file sizes in results page
-	// (files the user would have read to find these symbols manually).
-	if s.config == nil || s.config.GetBool(store.ConfigMetricsEnabled, true) {
-		proj, _ := st.GetProject(projName)
-		if proj != nil {
-			seenFiles := make(map[string]struct{})
-			baselineBytes := 0
-			for _, r := range output.Results {
-				if r.Node.FilePath == "" {
-					continue
-				}
-				if _, seen := seenFiles[r.Node.FilePath]; !seen {
-					seenFiles[r.Node.FilePath] = struct{}{}
-					absPath := filepath.Join(proj.RootPath, r.Node.FilePath)
-					if fi, statErr := os.Stat(absPath); statErr == nil {
-						baselineBytes += int(fi.Size())
-					}
-				}
-			}
-			price := priceForConfig(s.config)
-			responseJSON, _ := json.Marshal(responseData)
-			meta := metrics.CalculateSavings(baselineBytes, len(responseJSON), price)
-			result = resultWithMeta(responseData, meta, s.metricsTracker)
-		}
-	}
+	result := s.searchResultWithMeta(responseData, output.Results, st, projName)
 	s.addUpdateNotice(result)
 	return result, nil
+}
+
+// searchResultWithMeta computes token savings for search_graph and returns a wrapped result.
+// Baseline = sum of unique source file sizes referenced in results.
+// Falls back to jsonResult when metrics are disabled or project root is unavailable.
+func (s *Server) searchResultWithMeta(responseData map[string]any, results []*store.SearchResult, st *store.Store, projName string) *mcp.CallToolResult {
+	if s.config != nil && !s.config.GetBool(store.ConfigMetricsEnabled, true) {
+		return jsonResult(responseData)
+	}
+	proj, _ := st.GetProject(projName)
+	if proj == nil {
+		return jsonResult(responseData)
+	}
+	baselineBytes := uniqueFileBytes(results, proj.RootPath)
+	price := priceForConfig(s.config)
+	responseJSON, _ := json.Marshal(responseData)
+	meta := metrics.CalculateSavings(baselineBytes, len(responseJSON), price)
+	return resultWithMeta(responseData, meta, s.metricsTracker)
+}
+
+// uniqueFileBytes sums the sizes of unique source files referenced in search results.
+func uniqueFileBytes(results []*store.SearchResult, rootPath string) int {
+	seen := make(map[string]struct{}, len(results))
+	total := 0
+	for _, r := range results {
+		if r.Node.FilePath == "" {
+			continue
+		}
+		if _, ok := seen[r.Node.FilePath]; ok {
+			continue
+		}
+		seen[r.Node.FilePath] = struct{}{}
+		absPath := filepath.Join(rootPath, r.Node.FilePath)
+		if fi, err := os.Stat(absPath); err == nil {
+			total += int(fi.Size())
+		}
+	}
+	return total
 }
