@@ -3,12 +3,14 @@ package tools
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/DeusData/codebase-memory-mcp/internal/metrics"
 	"github.com/DeusData/codebase-memory-mcp/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -154,6 +156,15 @@ func (s *Server) buildSnippetResponse(match *snippetMatch, includeNeighbors bool
 		responseData["alternatives"] = alternatives
 	}
 
+	// Token savings: baseline = full source file size, response = marshaled JSON.
+	if s.config == nil || s.config.GetBool(store.ConfigMetricsEnabled, true) {
+		if fi, statErr := os.Stat(absPath); statErr == nil {
+			price := priceForConfig(s.config)
+			responseJSON, _ := json.Marshal(responseData)
+			meta := metrics.CalculateSavings(int(fi.Size()), len(responseJSON), price)
+			return resultWithMeta(responseData, meta, s.metricsTracker), nil
+		}
+	}
 	return jsonResult(responseData), nil
 }
 
