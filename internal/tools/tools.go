@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/DeusData/codebase-memory-mcp/internal/discover"
+	"github.com/DeusData/codebase-memory-mcp/internal/metrics"
 	"github.com/DeusData/codebase-memory-mcp/internal/pipeline"
 	"github.com/DeusData/codebase-memory-mcp/internal/store"
 	"github.com/DeusData/codebase-memory-mcp/internal/watcher"
@@ -43,6 +44,8 @@ type Server struct {
 	ctx      context.Context // server lifetime context — cancelled on shutdown
 	indexMu  sync.Mutex
 	handlers map[string]mcp.ToolHandler
+
+	metricsTracker *metrics.Tracker // nil when metrics_enabled=false
 
 	// Session-aware fields (set once via sync.Once, then immutable)
 	sessionOnce    sync.Once
@@ -71,6 +74,9 @@ func NewServer(r *store.StoreRouter, opts ...ServerOption) *Server {
 	for _, opt := range opts {
 		opt(srv)
 	}
+
+	// Initialize metrics tracker if enabled (default true).
+	srv.initMetricsTracker()
 
 	srv.mcp = mcp.NewServer(
 		&mcp.Implementation{
@@ -786,6 +792,53 @@ func (s *Server) registerProjectTools() {
 			}
 		}`),
 	}, s.handleIndexStatus)
+}
+
+// initMetricsTracker initializes the metrics tracker if metrics_enabled=true (default).
+func (s *Server) initMetricsTracker() {
+	enabled := true
+	if s.config != nil {
+		enabled = s.config.GetBool(store.ConfigMetricsEnabled, true)
+	}
+	if !enabled {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		slog.Warn("metrics: cannot determine home dir, metrics disabled", "err", err)
+		return
+	}
+	savingsPath := filepath.Join(home, ".cache", "codebase-memory-mcp", "savings.json")
+	s.metricsTracker = metrics.NewTracker(savingsPath)
+}
+
+// resultWithMeta wraps data with a _meta field containing token savings estimation.
+// If tracker is non-nil, also records the savings cumulatively.
+func resultWithMeta(data map[string]any, meta metrics.TokenMetadata, tracker *metrics.Tracker) *mcp.CallToolResult {
+	data["_meta"] = meta
+	if tracker != nil {
+		tracker.Record(meta)
+	}
+	return jsonResult(data)
+}
+
+// priceForConfig returns the USD price-per-token for the configured pricing model.
+// Defaults to Claude Sonnet pricing ($15/M output tokens).
+func priceForConfig(cfg *store.ConfigStore) float64 {
+	if cfg == nil {
+		return 0.000015 // claude-sonnet default
+	}
+	model := cfg.Get(store.ConfigPricingModel, "claude-sonnet")
+	switch model {
+	case "claude-opus":
+		return 0.000075 // $75/M output tokens
+	case "gpt-4o":
+		return 0.000010 // $10/M output tokens
+	case "custom":
+		return cfg.GetFloat64(store.ConfigCustomPricePerToken, 0.000015)
+	default: // "claude-sonnet"
+		return 0.000015
+	}
 }
 
 // --- Helpers ---
