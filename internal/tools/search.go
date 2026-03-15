@@ -2,8 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/DeusData/codebase-memory-mcp/internal/metrics"
 	"github.com/DeusData/codebase-memory-mcp/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -101,6 +105,31 @@ func (s *Server) handleSearchGraph(_ context.Context, req *mcp.CallToolRequest) 
 	s.addIndexStatus(responseData)
 
 	result := jsonResult(responseData)
+	// Token savings: baseline = sum of unique source file sizes in results page
+	// (files the user would have read to find these symbols manually).
+	if s.config == nil || s.config.GetBool(store.ConfigMetricsEnabled, true) {
+		proj, _ := st.GetProject(projName)
+		if proj != nil {
+			seenFiles := make(map[string]struct{})
+			baselineBytes := 0
+			for _, r := range output.Results {
+				if r.Node.FilePath == "" {
+					continue
+				}
+				if _, seen := seenFiles[r.Node.FilePath]; !seen {
+					seenFiles[r.Node.FilePath] = struct{}{}
+					absPath := filepath.Join(proj.RootPath, r.Node.FilePath)
+					if fi, statErr := os.Stat(absPath); statErr == nil {
+						baselineBytes += int(fi.Size())
+					}
+				}
+			}
+			price := priceForConfig(s.config)
+			responseJSON, _ := json.Marshal(responseData)
+			meta := metrics.CalculateSavings(baselineBytes, len(responseJSON), price)
+			result = resultWithMeta(responseData, meta, s.metricsTracker)
+		}
+	}
 	s.addUpdateNotice(result)
 	return result, nil
 }
