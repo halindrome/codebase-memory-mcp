@@ -190,7 +190,9 @@ func (p *Pipeline) Run() error {
 	slog.Info("pipeline.discovered", "files", len(files))
 	logHeapStats("pre_index")
 
-	// Use MEMORY journal mode during fresh indexing for faster bulk writes.
+	// Boost cache to 64 MB and set synchronous = OFF for write throughput.
+	// WAL mode is preserved so the DB remains crash-safe: the WAL file is
+	// replayed on next open if the process is killed mid-write.
 	p.Store.BeginBulkWrite(p.ctx)
 
 	wroteData := false

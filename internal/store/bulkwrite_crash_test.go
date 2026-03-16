@@ -108,8 +108,14 @@ func TestBulkWriteCrashRecovery(t *testing.T) {
 	// Fork subprocess that crashes mid-bulk-write.
 	cmd := exec.Command(os.Args[0], "-test.run=TestCrashHelper", "-test.v")
 	cmd.Env = append(os.Environ(), "CRASH_HELPER_DB="+dbPath)
-	out, _ := cmd.CombinedOutput() // exit 1 is expected — do not fail on error
+	out, err := cmd.CombinedOutput()
 	t.Logf("subprocess output: %s", out)
+	// The subprocess must have exited with code 1 (simulated crash via os.Exit(1)).
+	// Any other outcome — clean exit (0), setup failure (2), or launch error —
+	// means the crash was never exercised and the rest of the test is meaningless.
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("subprocess did not crash as expected: err=%v, output=%s", err, out)
+	}
 
 	// Reopen the DB — must not error.
 	s2, err := OpenPath(dbPath)
@@ -127,4 +133,16 @@ func TestBulkWriteCrashRecovery(t *testing.T) {
 	if result != "ok" {
 		t.Errorf("DB corrupted after crash: integrity_check = %q, want \"ok\"", result)
 	}
+
+	// Check whether the row inserted by the subprocess survived the crash.
+	// With synchronous = OFF, SQLite delegates durability to the OS page cache.
+	// On a true power failure the row may be lost; on a normal process-kill the
+	// OS typically flushes the cache and the row survives. Either outcome is
+	// acceptable — this is an intentional trade-off of the bulk-write mode.
+	// We log the result so test runs surface the actual behavior without failing.
+	var rowCount int
+	_ = s2.DB().QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM nodes WHERE qualified_name = 'crash.CrashFunc'",
+	).Scan(&rowCount)
+	t.Logf("row survived crash: %v (synchronous=OFF means this may legitimately be false on power-loss)", rowCount > 0)
 }
