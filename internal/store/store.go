@@ -217,19 +217,17 @@ func (s *Store) WALSize() int64 {
 	return fi.Size()
 }
 
-// BeginBulkWrite switches to MEMORY journal mode for faster bulk writes.
-// Also boosts cache to 64 MB for write throughput.
-// Call EndBulkWrite when done to restore WAL mode and adaptive cache.
+// BeginBulkWrite boosts cache to 64 MB for write throughput. WAL mode is kept
+// throughout for crash safety — a SIGKILL during indexing will not corrupt the DB.
+// Call EndBulkWrite when done to restore synchronous=NORMAL and adaptive cache.
 func (s *Store) BeginBulkWrite(ctx context.Context) {
-	_, _ = s.db.ExecContext(ctx, "PRAGMA journal_mode = MEMORY")
 	_, _ = s.db.ExecContext(ctx, "PRAGMA synchronous = OFF")
 	_, _ = s.db.ExecContext(ctx, "PRAGMA cache_size = -65536") // 64 MB
 }
 
-// EndBulkWrite restores WAL journal mode, NORMAL synchronous, and adaptive cache.
+// EndBulkWrite restores synchronous=NORMAL and the adaptive cache size.
 func (s *Store) EndBulkWrite(ctx context.Context) {
 	_, _ = s.db.ExecContext(ctx, "PRAGMA synchronous = NORMAL")
-	_, _ = s.db.ExecContext(ctx, "PRAGMA journal_mode = WAL")
 	s.restoreDefaultCache(ctx)
 }
 
