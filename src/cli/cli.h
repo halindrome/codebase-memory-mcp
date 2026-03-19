@@ -10,6 +10,7 @@
 #define CBM_CLI_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 /* ── Version ──────────────────────────────────────────────────── */
 
@@ -230,6 +231,13 @@ int cbm_config_delete(cbm_config_t *cfg, const char *key);
 /* Well-known config keys */
 #define CBM_CONFIG_AUTO_INDEX "auto_index"
 #define CBM_CONFIG_AUTO_INDEX_LIMIT "auto_index_limit"
+
+/* ── Claude config dir helper ─────────────────────────────────── */
+
+/* Return the Claude Code config directory into buf (size n).
+ * Checks CLAUDE_CONFIG_DIR env var first; falls back to {home}/.claude.
+ * Returns buf on success, NULL on error. */
+char *cbm_claude_config_dir(const char *home, char *buf, size_t n);
 
 /* ── Subcommands (wired from main.c) ─────────────────────────── */
 

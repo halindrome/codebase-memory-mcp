@@ -1953,18 +1953,54 @@ static const char *detect_arch(void) {
 #endif
 }
 
+/* ── Claude config dir helper ─────────────────────────────────── */
+
+/* Return the Claude Code config directory.
+ * Checks CLAUDE_CONFIG_DIR env var first; falls back to {home}/.claude.
+ * Result is written into buf (size n). Returns buf, or NULL on error. */
+char *cbm_claude_config_dir(const char *home, char *buf, size_t n) {
+    const char *env = getenv("CLAUDE_CONFIG_DIR");
+    if (env && env[0]) {
+        snprintf(buf, n, "%s", env);
+    } else {
+        snprintf(buf, n, "%s/.claude", home);
+    }
+    return buf;
+}
+
+/* Internal alias used within this file */
+static char *claude_config_dir(const char *home, char *buf, size_t n) {
+    return cbm_claude_config_dir(home, buf, n);
+}
+
 /* ── Subcommand: install ──────────────────────────────────────── */
 
 int cbm_cmd_install(int argc, char **argv) {
     parse_auto_answer(argc, argv);
     bool dry_run = false;
     bool force = false;
+    bool has_project = false;
+    char project_path[1024];
+    project_path[0] = '\0';
+
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--dry-run") == 0) {
             dry_run = true;
-        }
-        if (strcmp(argv[i], "--force") == 0) {
+        } else if (strcmp(argv[i], "--force") == 0) {
             force = true;
+        } else if (strcmp(argv[i], "--project") == 0) {
+            has_project = true;
+            /* Consume the next arg as the project path if it doesn't look like a flag */
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                snprintf(project_path, sizeof(project_path), "%s", argv[i + 1]);
+                i++;
+            } else {
+                /* No path provided — use cwd */
+                if (!getcwd(project_path, sizeof(project_path))) {
+                    fprintf(stderr, "error: getcwd failed\n");
+                    return 1;
+                }
+            }
         }
     }
 
@@ -1972,6 +2008,16 @@ int cbm_cmd_install(int argc, char **argv) {
     if (!home) {
         fprintf(stderr, "error: HOME not set\n");
         return 1;
+    }
+
+    /* Determine the Claude Code config base directory:
+     * --project overrides to {project_path}/.claude;
+     * otherwise CLAUDE_CONFIG_DIR env var overrides ~/.claude. */
+    char claude_dir[1024];
+    if (has_project) {
+        snprintf(claude_dir, sizeof(claude_dir), "%s/.claude", project_path);
+    } else {
+        claude_config_dir(home, claude_dir, sizeof(claude_dir));
     }
 
     printf("codebase-memory-mcp install %s\n\n", CBM_VERSION);
@@ -2011,8 +2057,14 @@ int cbm_cmd_install(int argc, char **argv) {
     char self_path[1024];
     snprintf(self_path, sizeof(self_path), "%s/.local/bin/codebase-memory-mcp", home);
 
-    /* Step 3: Detect agents */
+    /* Step 3: Detect agents.
+     * When --project is set, we force Claude Code to true (we always install
+     * into the project's .claude/ dir) and still detect all other agents from
+     * the global home directory. */
     cbm_detected_agents_t agents = cbm_detect_agents(home);
+    if (has_project) {
+        agents.claude_code = true;
+    }
     printf("Detected agents:");
     if (agents.claude_code) {
         printf(" Claude-Code");
@@ -2047,7 +2099,7 @@ int cbm_cmd_install(int argc, char **argv) {
     /* Step 4: Install Claude Code skills + hooks */
     if (agents.claude_code) {
         char skills_dir[1024];
-        snprintf(skills_dir, sizeof(skills_dir), "%s/.claude/skills", home);
+        snprintf(skills_dir, sizeof(skills_dir), "%s/skills", claude_dir);
         printf("Claude Code:\n");
 
         int skill_count = cbm_install_skills(skills_dir, force, dry_run);
@@ -2059,7 +2111,7 @@ int cbm_cmd_install(int argc, char **argv) {
 
         /* MCP config (.mcp.json) */
         char mcp_path[1024];
-        snprintf(mcp_path, sizeof(mcp_path), "%s/.claude/.mcp.json", home);
+        snprintf(mcp_path, sizeof(mcp_path), "%s/.mcp.json", claude_dir);
         if (!dry_run) {
             cbm_install_editor_mcp(self_path, mcp_path);
         }
@@ -2067,7 +2119,7 @@ int cbm_cmd_install(int argc, char **argv) {
 
         /* PreToolUse hook */
         char settings_path[1024];
-        snprintf(settings_path, sizeof(settings_path), "%s/.claude/settings.json", home);
+        snprintf(settings_path, sizeof(settings_path), "%s/settings.json", claude_dir);
         if (!dry_run) {
             cbm_upsert_claude_hooks(settings_path);
         }
@@ -2226,9 +2278,24 @@ int cbm_cmd_install(int argc, char **argv) {
 int cbm_cmd_uninstall(int argc, char **argv) {
     parse_auto_answer(argc, argv);
     bool dry_run = false;
+    bool has_project = false;
+    char project_path[1024];
+    project_path[0] = '\0';
+
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--dry-run") == 0) {
             dry_run = true;
+        } else if (strcmp(argv[i], "--project") == 0) {
+            has_project = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                snprintf(project_path, sizeof(project_path), "%s", argv[i + 1]);
+                i++;
+            } else {
+                if (!getcwd(project_path, sizeof(project_path))) {
+                    fprintf(stderr, "error: getcwd failed\n");
+                    return 1;
+                }
+            }
         }
     }
 
@@ -2238,26 +2305,37 @@ int cbm_cmd_uninstall(int argc, char **argv) {
         return 1;
     }
 
+    /* Determine the Claude Code config base directory */
+    char claude_dir[1024];
+    if (has_project) {
+        snprintf(claude_dir, sizeof(claude_dir), "%s/.claude", project_path);
+    } else {
+        claude_config_dir(home, claude_dir, sizeof(claude_dir));
+    }
+
     printf("codebase-memory-mcp uninstall\n\n");
 
     /* Step 1: Detect agents and remove per-agent configs */
     cbm_detected_agents_t agents = cbm_detect_agents(home);
+    if (has_project) {
+        agents.claude_code = true;
+    }
 
     if (agents.claude_code) {
         char skills_dir[1024];
-        snprintf(skills_dir, sizeof(skills_dir), "%s/.claude/skills", home);
+        snprintf(skills_dir, sizeof(skills_dir), "%s/skills", claude_dir);
         int removed = cbm_remove_skills(skills_dir, dry_run);
         printf("Claude Code: removed %d skill(s)\n", removed);
 
         char mcp_path[1024];
-        snprintf(mcp_path, sizeof(mcp_path), "%s/.claude/.mcp.json", home);
+        snprintf(mcp_path, sizeof(mcp_path), "%s/.mcp.json", claude_dir);
         if (!dry_run) {
             cbm_remove_editor_mcp(mcp_path);
         }
         printf("  removed MCP config entry\n");
 
         char settings_path[1024];
-        snprintf(settings_path, sizeof(settings_path), "%s/.claude/settings.json", home);
+        snprintf(settings_path, sizeof(settings_path), "%s/settings.json", claude_dir);
         if (!dry_run) {
             cbm_remove_claude_hooks(settings_path);
         }
@@ -2590,8 +2668,10 @@ int cbm_cmd_update(int argc, char **argv) {
     }
 
     /* Step 6: Reinstall skills (force to pick up new content) */
+    char claude_dir_upd[1024];
+    claude_config_dir(home, claude_dir_upd, sizeof(claude_dir_upd));
     char skills_dir[1024];
-    snprintf(skills_dir, sizeof(skills_dir), "%s/.claude/skills", home);
+    snprintf(skills_dir, sizeof(skills_dir), "%s/skills", claude_dir_upd);
     int skill_count = cbm_install_skills(skills_dir, true, false);
     printf("Updated %d skill(s).\n", skill_count);
 

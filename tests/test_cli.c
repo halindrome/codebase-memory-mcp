@@ -2013,6 +2013,91 @@ TEST(cli_config_persists) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ *  Group G: --project flag / CLAUDE_CONFIG_DIR
+ * ═══════════════════════════════════════════════════════════════════ */
+
+TEST(cli_claude_config_dir_default) {
+    /* Without CLAUDE_CONFIG_DIR set, returns {home}/.claude */
+    const char *raw = getenv("CLAUDE_CONFIG_DIR");
+    char *old_val = raw ? strdup(raw) : NULL;
+    cbm_unsetenv("CLAUDE_CONFIG_DIR");
+
+    char buf[1024];
+    char *result = cbm_claude_config_dir("/home/user", buf, sizeof(buf));
+    ASSERT_NOT_NULL(result);
+    ASSERT_STR_EQ(result, "/home/user/.claude");
+
+    if (old_val) {
+        cbm_setenv("CLAUDE_CONFIG_DIR", old_val, 1);
+        free(old_val);
+    }
+    PASS();
+}
+
+TEST(cli_claude_config_dir_env_override) {
+    /* CLAUDE_CONFIG_DIR overrides the default ~/.claude path */
+    const char *raw = getenv("CLAUDE_CONFIG_DIR");
+    char *old_val = raw ? strdup(raw) : NULL;
+    cbm_setenv("CLAUDE_CONFIG_DIR", "/custom/claude/dir", 1);
+
+    char buf[1024];
+    char *result = cbm_claude_config_dir("/home/user", buf, sizeof(buf));
+    ASSERT_NOT_NULL(result);
+    ASSERT_STR_EQ(result, "/custom/claude/dir");
+
+    if (old_val) {
+        cbm_setenv("CLAUDE_CONFIG_DIR", old_val, 1);
+        free(old_val);
+    } else {
+        cbm_unsetenv("CLAUDE_CONFIG_DIR");
+    }
+    PASS();
+}
+
+TEST(cli_project_install_targets_project_claude_dir) {
+    /* --project /some/path causes skills to install into {path}/.claude/skills/
+     * We test this by directly calling cbm_install_skills with the expected path
+     * to verify the path construction logic matches the expected pattern. */
+    char tmpdir[256]; snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-proj-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        SKIP("cbm_mkdtemp failed");
+
+    /* Simulate what cbm_cmd_install does when --project {tmpdir} is provided:
+     * claude_dir = {tmpdir}/.claude
+     * skills_dir = {tmpdir}/.claude/skills */
+    char claude_dir[512];
+    snprintf(claude_dir, sizeof(claude_dir), "%s/.claude", tmpdir);
+
+    char skills_dir[512];
+    snprintf(skills_dir, sizeof(skills_dir), "%s/skills", claude_dir);
+
+    int count = cbm_install_skills(skills_dir, false, false);
+    ASSERT_EQ(count, CBM_SKILL_COUNT);
+
+    /* Verify skills landed under project dir, not global home */
+    const cbm_skill_t *sk = cbm_get_skills();
+    for (int i = 0; i < CBM_SKILL_COUNT; i++) {
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s/SKILL.md", skills_dir, sk[i].name);
+        struct stat st;
+        ASSERT_EQ(stat(path, &st), 0);
+    }
+
+    /* Also verify MCP config path pattern */
+    char mcp_path[512];
+    snprintf(mcp_path, sizeof(mcp_path), "%s/.mcp.json", claude_dir);
+    int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", mcp_path);
+    ASSERT_EQ(rc, 0);
+
+    const char *data = read_test_file(mcp_path);
+    ASSERT_NOT_NULL(data);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  *  Suite definition
  * ═══════════════════════════════════════════════════════════════════ */
 
@@ -2148,4 +2233,9 @@ SUITE(cli) {
     RUN_TEST(cli_config_get_int);
     RUN_TEST(cli_config_delete);
     RUN_TEST(cli_config_persists);
+
+    /* --project flag / CLAUDE_CONFIG_DIR (3 tests — group G) */
+    RUN_TEST(cli_claude_config_dir_default);
+    RUN_TEST(cli_claude_config_dir_env_override);
+    RUN_TEST(cli_project_install_targets_project_claude_dir);
 }
