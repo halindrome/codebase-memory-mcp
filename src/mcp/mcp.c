@@ -28,6 +28,7 @@
 #include <sys/unistd.h>
 #include <sys/poll.h>
 #include <poll.h>
+#include <fcntl.h>
 #endif
 #include <yyjson/yyjson.h>
 #include <stdint.h> // int64_t
@@ -2375,8 +2376,23 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
 
     for (;;) {
         /* Poll with idle timeout so we can evict unused stores between requests.
-         * MCP is request-response (one line at a time), so mixing poll() on the
-         * raw fd with getline() on the buffered FILE* is safe in practice. */
+         *
+         * IMPORTANT: poll() operates on the raw fd, but getline() reads from a
+         * buffered FILE*. When a client sends multiple messages in rapid
+         * succession, the first getline() call may drain ALL kernel data into
+         * libc's internal FILE* buffer. Subsequent poll() calls then see an
+         * empty kernel fd and block for STORE_IDLE_TIMEOUT_S seconds even
+         * though the next messages are already in the FILE* buffer.
+         *
+         * Fix (Unix): use a three-phase approach —
+         *   Phase 1: non-blocking poll (timeout=0) to check the kernel fd.
+         *   Phase 2: if Phase 1 returns 0, peek the FILE* buffer via fgetc/
+         *            ungetc to detect data buffered by a prior getline() call.
+         *            The fd is temporarily set O_NONBLOCK so fgetc() returns
+         *            immediately (EAGAIN → EOF + ferror) instead of blocking
+         *            when the FILE* buffer is empty, which would otherwise
+         *            bypass the Phase 3 idle eviction timeout.
+         *   Phase 3: only if both phases confirm no data, do blocking poll. */
 #ifdef _WIN32
         /* Windows: WaitForSingleObject on stdin handle */
         HANDLE hStdin = (HANDLE)_get_osfhandle(fd);
@@ -2389,16 +2405,62 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
             continue;
         }
 #else
+        /* Phase 1: non-blocking poll — catches data already in the kernel fd
+         * AND handles the case where a prior getline() drained the kernel fd
+         * into libc's FILE* buffer (raw fd appears empty but data is buffered).
+         * We always try a zero-timeout poll first; if it misses buffered data,
+         * phase 2 below catches it via an explicit FILE* peek. */
         struct pollfd pfd = {.fd = fd, .events = POLLIN};
-        int pr = poll(&pfd, 1, STORE_IDLE_TIMEOUT_S * 1000);
+        int pr = poll(&pfd, 1, 0); /* non-blocking */
 
         if (pr < 0) {
             break; /* error or signal */
         }
         if (pr == 0) {
-            /* Timeout — evict idle store to free resources */
-            cbm_mcp_server_evict_idle(srv, STORE_IDLE_TIMEOUT_S);
-            continue;
+            /* Raw fd appears empty. Check whether libc has already buffered
+             * data from a previous over-read by peeking one byte via fgetc.
+             * IMPORTANT: temporarily set O_NONBLOCK so fgetc() returns
+             * immediately when the FILE* buffer AND kernel fd are both empty
+             * (EAGAIN → EOF + ferror). Without this, fgetc() on a blocking fd
+             * would block indefinitely, preventing the Phase 3 idle eviction
+             * timeout from ever firing. */
+            int saved_flags = fcntl(fd, F_GETFL);
+            if (saved_flags < 0) {
+                /* fcntl failed (should not happen on a valid fd) — skip the
+                 * FILE* peek and fall straight through to the blocking poll so
+                 * idle eviction still fires on timeout. */
+                pr = poll(&pfd, 1, STORE_IDLE_TIMEOUT_S * 1000);
+                if (pr < 0) {
+                    break;
+                }
+                if (pr == 0) {
+                    cbm_mcp_server_evict_idle(srv, STORE_IDLE_TIMEOUT_S);
+                    continue;
+                }
+            } else {
+                (void)fcntl(fd, F_SETFL, saved_flags | O_NONBLOCK);
+                int c = fgetc(in);
+                (void)fcntl(fd, F_SETFL, saved_flags); /* restore blocking */
+                if (c == EOF) {
+                    if (feof(in)) {
+                        break; /* true EOF */
+                    }
+                    /* No buffered data (EAGAIN from non-blocking read) — clear
+                     * the ferror indicator set by EAGAIN, then blocking poll. */
+                    clearerr(in);
+                    pr = poll(&pfd, 1, STORE_IDLE_TIMEOUT_S * 1000);
+                    if (pr < 0) {
+                        break;
+                    }
+                    if (pr == 0) {
+                        cbm_mcp_server_evict_idle(srv, STORE_IDLE_TIMEOUT_S);
+                        continue;
+                    }
+                } else {
+                    /* Buffered data found — push back and fall through to getline */
+                    (void)ungetc(c, in);
+                }
+            }
         }
 #endif
 
