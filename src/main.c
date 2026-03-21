@@ -281,8 +281,18 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (strcmp(argv[i], "cli") == 0) {
+            /* Pre-scan for --progress so the sink is installed before
+             * cbm_mem_init() logs mem.init — keeping stderr clean. */
+            int cli_argc = argc - i - 1;
+            char **cli_argv = argv + i + 1;
+            for (int j = 0; j < cli_argc; j++) {
+                if (strcmp(cli_argv[j], "--progress") == 0) {
+                    cbm_progress_sink_init(stderr);
+                    break;
+                }
+            }
             cbm_mem_init(0.5);
-            return run_cli(argc - i - 1, argv + i + 1);
+            return run_cli(cli_argc, cli_argv);
         }
         if (strcmp(argv[i], "install") == 0) {
             return cbm_cmd_install(argc - i - 1, argv + i + 1);
