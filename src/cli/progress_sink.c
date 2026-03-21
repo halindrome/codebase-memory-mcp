@@ -18,8 +18,8 @@
 
 /* ── Module state ─────────────────────────────────────────────── */
 
-static FILE            *s_out       = NULL; /* target stream (stderr) */
-static cbm_log_sink_fn  s_prev_sink = NULL; /* restored by _fini */
+static FILE *s_out = NULL;                 /* target stream (stderr) */
+static cbm_log_sink_fn s_prev_sink = NULL; /* restored by _fini */
 /* Set to 1 after a \r line is emitted so _fini can flush a trailing \n. */
 static int s_needs_newline = 0;
 
@@ -31,8 +31,7 @@ static int s_needs_newline = 0;
  * Writes at most (buf_len-1) chars into buf and NUL-terminates.
  * Returns buf, or NULL if the key was not found.
  */
-static const char *extract_kv(const char *line, const char *key,
-                               char *buf, int buf_len) {
+static const char *extract_kv(const char *line, const char *key, char *buf, int buf_len) {
     if (!line || !key || !buf || buf_len <= 0) {
         return NULL;
     }
@@ -41,8 +40,7 @@ static const char *extract_kv(const char *line, const char *key,
     const char *p = line;
     while (*p) {
         /* Look for " key=" or start-of-string "key=" */
-        if ((p == line || p[-1] == ' ') && strncmp(p, key, klen) == 0 &&
-            p[klen] == '=') {
+        if ((p == line || p[-1] == ' ') && strncmp(p, key, klen) == 0 && p[klen] == '=') {
             const char *val = p + klen + 1;
             int i = 0;
             while (val[i] && val[i] != ' ' && i < buf_len - 1) {
@@ -60,7 +58,7 @@ static const char *extract_kv(const char *line, const char *key,
 /* ── Public API ───────────────────────────────────────────────── */
 
 void cbm_progress_sink_init(FILE *out) {
-    s_out          = out ? out : stderr;
+    s_out = out ? out : stderr;
     s_needs_newline = 0;
     /* Save and replace the current sink. */
     s_prev_sink = NULL; /* cbm_log_set_sink does not expose get; we shadow it */
@@ -94,7 +92,7 @@ void cbm_progress_sink_fn(const char *line) {
         return;
     }
 
-    char msg[64]  = {0};
+    char msg[64] = {0};
     char val[128] = {0};
 
     if (!extract_kv(line, "msg", msg, (int)sizeof(msg))) {
@@ -110,10 +108,12 @@ void cbm_progress_sink_fn(const char *line) {
         char files_buf[32] = {0};
         const char *files = extract_kv(line, "files", files_buf, (int)sizeof(files_buf));
         if (files) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "  Discovering files (%s found)\n", files);
         } else {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "  Discovering files...\n");
         }
         (void)fflush(s_out);
@@ -124,10 +124,12 @@ void cbm_progress_sink_fn(const char *line) {
     if (strcmp(msg, "pipeline.route") == 0) {
         const char *path = extract_kv(line, "path", val, (int)sizeof(val));
         if (path && strcmp(path, "incremental") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "  Starting incremental index\n");
         } else {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "  Starting full index\n");
         }
         (void)fflush(s_out);
@@ -138,7 +140,8 @@ void cbm_progress_sink_fn(const char *line) {
     if (strcmp(msg, "pass.start") == 0) {
         const char *pass = extract_kv(line, "pass", val, (int)sizeof(val));
         if (pass && strcmp(pass, "structure") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[1/9] Building file structure\n");
             (void)fflush(s_out);
         }
@@ -156,32 +159,41 @@ void cbm_progress_sink_fn(const char *line) {
         if (strcmp(pass, "parallel_extract") == 0) {
             /* Finish the \r in-place line with a proper newline first. */
             if (s_needs_newline) {
-                /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+                /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+                 */
                 (void)fprintf(s_out, "\n");
                 s_needs_newline = 0;
             }
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[2/9] Extracting definitions\n");
         } else if (strcmp(pass, "registry_build") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[3/9] Building registry\n");
         } else if (strcmp(pass, "parallel_resolve") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[4/9] Resolving calls & edges\n");
         } else if (strcmp(pass, "tests") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[5/9] Detecting tests\n");
         } else if (strcmp(pass, "githistory_compute") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[6/9] Analyzing git history\n");
         } else if (strcmp(pass, "httplinks") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[7/9] Scanning HTTP links\n");
         } else if (strcmp(pass, "configlink") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[8/9] Linking config files\n");
         } else if (strcmp(pass, "dump") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "[9/9] Writing database\n");
         }
         /* k8s, decorator_tags, persist_hashes, and other passes: silently skip. */
@@ -192,24 +204,28 @@ void cbm_progress_sink_fn(const char *line) {
     /* ── pipeline.done ─────────────────────────────────────────── */
     if (strcmp(msg, "pipeline.done") == 0) {
         if (s_needs_newline) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "\n");
             s_needs_newline = 0;
         }
-        char nodes_buf[32]   = {0};
-        char edges_buf[32]   = {0};
-        char ms_buf[32]      = {0};
-        const char *nodes    = extract_kv(line, "nodes",      nodes_buf, (int)sizeof(nodes_buf));
-        const char *edges    = extract_kv(line, "edges",      edges_buf, (int)sizeof(edges_buf));
-        const char *elapsed  = extract_kv(line, "elapsed_ms", ms_buf,    (int)sizeof(ms_buf));
+        char nodes_buf[32] = {0};
+        char edges_buf[32] = {0};
+        char ms_buf[32] = {0};
+        const char *nodes = extract_kv(line, "nodes", nodes_buf, (int)sizeof(nodes_buf));
+        const char *edges = extract_kv(line, "edges", edges_buf, (int)sizeof(edges_buf));
+        const char *elapsed = extract_kv(line, "elapsed_ms", ms_buf, (int)sizeof(ms_buf));
         if (nodes && edges && elapsed) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "Done: %s nodes, %s edges (%s ms)\n", nodes, edges, elapsed);
         } else if (nodes && edges) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "Done: %s nodes, %s edges\n", nodes, edges);
         } else {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "Done.\n");
         }
         (void)fflush(s_out);
@@ -218,16 +234,17 @@ void cbm_progress_sink_fn(const char *line) {
 
     /* ── parallel.extract.progress ─────────────────────────────── */
     if (strcmp(msg, "parallel.extract.progress") == 0) {
-        char done_buf[32]  = {0};
+        char done_buf[32] = {0};
         char total_buf[32] = {0};
-        const char *done  = extract_kv(line, "done",  done_buf,  (int)sizeof(done_buf));
+        const char *done = extract_kv(line, "done", done_buf, (int)sizeof(done_buf));
         const char *total = extract_kv(line, "total", total_buf, (int)sizeof(total_buf));
         if (done && total) {
-            long d = strtol(done,  NULL, 10);
+            long d = strtol(done, NULL, 10);
             long t = strtol(total, NULL, 10);
-            int  pct = (t > 0) ? (int)((d * 100L) / t) : 0;
+            int pct = (t > 0) ? (int)((d * 100L) / t) : 0;
             /* \r writes in-place on the current terminal line (no newline). */
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             (void)fprintf(s_out, "\r  Extracting: %ld/%ld files (%d%%)", d, t, pct);
             (void)fflush(s_out);
             s_needs_newline = 1;

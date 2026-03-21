@@ -157,7 +157,7 @@ static int run_cli(int argc, char **argv) {
      * enabling SIGINT cancellation via cli_sigint_handler. */
     if (progress_enabled && strcmp(tool_name, "index_repository") == 0) {
         char *repo_path = cbm_mcp_get_string_arg(args_json, "repo_path");
-        char *mode_str  = cbm_mcp_get_string_arg(args_json, "mode");
+        char *mode_str = cbm_mcp_get_string_arg(args_json, "mode");
 
         if (!repo_path) {
             free(mode_str);
@@ -201,11 +201,13 @@ static int run_cli(int argc, char **argv) {
             if (store) {
                 cbm_store_close(store);
             }
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             printf("{\"project\":\"%s\",\"status\":\"indexed\",\"nodes\":%d,\"edges\":%d}\n",
                    project_name, nodes, edges);
         } else {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
             printf("{\"project\":\"%s\",\"status\":\"error\"}\n",
                    project_name ? project_name : "unknown");
         }
