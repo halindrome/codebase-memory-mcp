@@ -4,8 +4,9 @@
  * Parses structured log lines (format: "level=info msg=TAG key=val ...") and
  * maps known pipeline event tags to human-readable phase labels on stderr.
  *
- * Thread safety: all writes go through a single fprintf to stderr; POSIX
- * guarantees that individual fprintf calls are atomic for lines < PIPE_BUF.
+ * Thread safety: fprintf is thread-safe on POSIX via per-FILE* internal
+ * locking (flockfile/funlockfile). Individual fprintf calls will not
+ * interleave even when called from parallel worker threads.
  * The \r progress lines for parallel.extract.progress do not use a newline
  * (in-place update), so they rely on the terminal rendering.
  */
@@ -20,8 +21,10 @@
 
 static FILE *s_out = NULL;                 /* target stream (stderr) */
 static cbm_log_sink_fn s_prev_sink = NULL; /* restored by _fini */
-/* Set to 1 after a \r line is emitted so _fini can flush a trailing \n. */
-static int s_needs_newline = 0;
+/* Set to 1 after a \r line is emitted so _fini can flush a trailing \n.
+ * Written by parallel worker threads, read by the orchestration thread —
+ * declare volatile to prevent the compiler from caching the value. */
+static volatile int s_needs_newline = 0;
 
 /* ── Internal helpers ─────────────────────────────────────────── */
 

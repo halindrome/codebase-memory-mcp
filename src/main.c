@@ -45,8 +45,9 @@ static atomic_int g_shutdown = 0;
 
 /* ── CLI progress / SIGINT state ─────────────────────────────────── */
 
-/* Active pipeline during --progress CLI run; set before cbm_pipeline_run(). */
-static cbm_pipeline_t *g_cli_pipeline = NULL;
+/* Active pipeline during --progress CLI run; set before cbm_pipeline_run().
+ * volatile ensures the signal handler always observes the current pointer. */
+static cbm_pipeline_t *volatile g_cli_pipeline = NULL;
 
 /* SIGINT handler for CLI --progress mode: cancel the active pipeline. */
 static void cli_sigint_handler(int sig) {
@@ -218,7 +219,11 @@ static int run_cli(int argc, char **argv) {
         return rc == 0 ? 0 : 1;
     }
 
-    /* Default path: delegate to cbm_mcp_handle_tool. */
+    /* Default path: delegate to cbm_mcp_handle_tool.
+     * Note: --progress is silently accepted here but no pipeline events will
+     * fire for non-index_repository tools, so nothing is emitted to stderr.
+     * This is intentional — unknown flags are silently ignored for forward
+     * compatibility. */
     cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
     if (!srv) {
         // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)

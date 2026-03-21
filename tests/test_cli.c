@@ -2161,17 +2161,16 @@ TEST(cli_progress_stderr_labels) {
 }
 
 /*
- * test_cli_progress_stdout_json
+ * test_cli_progress_phase_labels
  *
- * Verifies that the progress sink's output does NOT contain JSON-contaminating
- * phase markers (like "[N/9]") when fed a pass.timing event.  A real CLI run
- * would keep JSON on stdout and progress on stderr; here we confirm the sink
- * output (going to a tmp FILE*) never contains JSON-looking text when given
- * a structured pipeline event.
+ * Verifies that the progress sink writes the correct phase labels ("[1/9]",
+ * "Done:") when fed pass.start and pipeline.done events.  Uses a tmpfile()
+ * as the target stream to capture sink output without touching real stderr.
  *
- * Also exercises the "Done:" label emitted by "pipeline.done".
+ * Also confirms that the captured output does NOT start with '{' — the sink
+ * must never emit JSON-like content.
  */
-TEST(cli_progress_stdout_json) {
+TEST(cli_progress_phase_labels) {
     FILE *tmp = tmpfile();
     if (!tmp)
         SKIP("tmpfile() failed");
@@ -2201,6 +2200,75 @@ TEST(cli_progress_stdout_json) {
      * independent.  We verify the captured output does NOT start with '{',
      * confirming the sink did not emit JSON. */
     ASSERT(buf[0] != '{');
+
+    PASS();
+}
+
+/*
+ * test_cli_progress_parallel_extract
+ *
+ * Verifies the \r in-place update path for parallel.extract.progress events,
+ * and that the trailing newline is emitted by the pass.timing(parallel_extract)
+ * handler (not by _fini).
+ */
+TEST(cli_progress_parallel_extract) {
+    FILE *tmp = tmpfile();
+    if (!tmp)
+        SKIP("tmpfile() failed");
+
+    cbm_progress_sink_init(tmp);
+
+    /* Simulate a parallel.extract.progress event (written by worker threads). */
+    cbm_log_info("parallel.extract.progress", "done", "50", "total", "100", NULL);
+
+    /* Simulate pass.timing(parallel_extract) — should emit \n + "[2/9]". */
+    cbm_log_info("pass.timing", "pass", "parallel_extract", "elapsed_ms", "500", NULL);
+
+    cbm_progress_sink_fini();
+
+    rewind(tmp);
+    char buf[1024] = {0};
+    size_t n = fread(buf, 1, sizeof(buf) - 1, tmp);
+    fclose(tmp);
+    buf[n] = '\0';
+
+    /* The \r line must contain the extraction counts and percent. */
+    ASSERT(strstr(buf, "Extracting:") != NULL);
+    ASSERT(strstr(buf, "50/100") != NULL);
+    ASSERT(strstr(buf, "50%") != NULL);
+
+    /* After pass.timing(parallel_extract), the [2/9] label appears. */
+    ASSERT(strstr(buf, "[2/9]") != NULL);
+
+    PASS();
+}
+
+/*
+ * test_cli_progress_unknown_tag
+ *
+ * Verifies that log events with unrecognized msg= tags are silently discarded
+ * (not written to the progress stream).
+ */
+TEST(cli_progress_unknown_tag) {
+    FILE *tmp = tmpfile();
+    if (!tmp)
+        SKIP("tmpfile() failed");
+
+    cbm_progress_sink_init(tmp);
+
+    /* Emit an event with a tag the sink does not recognize. */
+    cbm_log_info("some.internal.event", "key", "value", NULL);
+
+    cbm_progress_sink_fini();
+
+    rewind(tmp);
+    char buf[256] = {0};
+    size_t n = fread(buf, 1, sizeof(buf) - 1, tmp);
+    fclose(tmp);
+    buf[n] = '\0';
+
+    /* Nothing should have been written for an unknown tag. */
+    ASSERT(n == 0);
 
     PASS();
 }
@@ -2342,7 +2410,9 @@ SUITE(cli) {
     RUN_TEST(cli_config_delete);
     RUN_TEST(cli_config_persists);
 
-    /* --progress flag (2 tests — group G) */
+    /* --progress flag (4 tests — group G) */
     RUN_TEST(cli_progress_stderr_labels);
-    RUN_TEST(cli_progress_stdout_json);
+    RUN_TEST(cli_progress_phase_labels);
+    RUN_TEST(cli_progress_parallel_extract);
+    RUN_TEST(cli_progress_unknown_tag);
 }
