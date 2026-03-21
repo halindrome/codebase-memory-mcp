@@ -25,6 +25,10 @@ static cbm_log_sink_fn s_prev_sink = NULL; /* restored by _fini */
  * Written by parallel worker threads, read by the orchestration thread —
  * declare volatile to prevent the compiler from caching the value. */
 static volatile int s_needs_newline = 0;
+/* Node/edge counts captured from gbuf.dump (before node_by_qn is freed).
+ * pipeline.done arrives after the QN table is freed so its nodes= is 0. */
+static int s_gbuf_nodes = -1;
+static int s_gbuf_edges = -1;
 
 /* ── Internal helpers ─────────────────────────────────────────── */
 
@@ -63,6 +67,8 @@ static const char *extract_kv(const char *line, const char *key, char *buf, int 
 void cbm_progress_sink_init(FILE *out) {
     s_out = out ? out : stderr;
     s_needs_newline = 0;
+    s_gbuf_nodes = -1;
+    s_gbuf_edges = -1;
     /* Save and replace the current sink. */
     s_prev_sink = NULL; /* cbm_log_set_sink does not expose get; we shadow it */
     cbm_log_set_sink(cbm_progress_sink_fn);
@@ -182,14 +188,14 @@ void cbm_progress_sink_fn(const char *line) {
             /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
              */
             (void)fprintf(s_out, "[5/9] Detecting tests\n");
-        } else if (strcmp(pass, "githistory_compute") == 0) {
-            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
-             */
-            (void)fprintf(s_out, "[6/9] Analyzing git history\n");
         } else if (strcmp(pass, "httplinks") == 0) {
             /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
              */
-            (void)fprintf(s_out, "[7/9] Scanning HTTP links\n");
+            (void)fprintf(s_out, "[6/9] Scanning HTTP links\n");
+        } else if (strcmp(pass, "githistory_compute") == 0) {
+            /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+             */
+            (void)fprintf(s_out, "[7/9] Analyzing git history\n");
         } else if (strcmp(pass, "configlink") == 0) {
             /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
              */
@@ -204,6 +210,19 @@ void cbm_progress_sink_fn(const char *line) {
         return;
     }
 
+    /* ── gbuf.dump — capture accurate node/edge counts ────────── */
+    if (strcmp(msg, "gbuf.dump") == 0) {
+        char n_buf[32] = {0};
+        char e_buf[32] = {0};
+        if (extract_kv(line, "nodes", n_buf, (int)sizeof(n_buf))) {
+            s_gbuf_nodes = (int)strtol(n_buf, NULL, 10);
+        }
+        if (extract_kv(line, "edges", e_buf, (int)sizeof(e_buf))) {
+            s_gbuf_edges = (int)strtol(e_buf, NULL, 10);
+        }
+        return;
+    }
+
     /* ── pipeline.done ─────────────────────────────────────────── */
     if (strcmp(msg, "pipeline.done") == 0) {
         if (s_needs_newline) {
@@ -212,20 +231,19 @@ void cbm_progress_sink_fn(const char *line) {
             (void)fprintf(s_out, "\n");
             s_needs_newline = 0;
         }
-        char nodes_buf[32] = {0};
-        char edges_buf[32] = {0};
         char ms_buf[32] = {0};
-        const char *nodes = extract_kv(line, "nodes", nodes_buf, (int)sizeof(nodes_buf));
-        const char *edges = extract_kv(line, "edges", edges_buf, (int)sizeof(edges_buf));
         const char *elapsed = extract_kv(line, "elapsed_ms", ms_buf, (int)sizeof(ms_buf));
-        if (nodes && edges && elapsed) {
+        /* Use counts from gbuf.dump (fired before node_by_qn is freed).
+         * pipeline.done's own nodes= field is always 0 after the QN table free. */
+        if (s_gbuf_nodes >= 0 && s_gbuf_edges >= 0 && elapsed) {
             /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
              */
-            (void)fprintf(s_out, "Done: %s nodes, %s edges (%s ms)\n", nodes, edges, elapsed);
-        } else if (nodes && edges) {
+            (void)fprintf(s_out, "Done: %d nodes, %d edges (%s ms)\n", s_gbuf_nodes, s_gbuf_edges,
+                          elapsed);
+        } else if (s_gbuf_nodes >= 0 && s_gbuf_edges >= 0) {
             /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
              */
-            (void)fprintf(s_out, "Done: %s nodes, %s edges\n", nodes, edges);
+            (void)fprintf(s_out, "Done: %d nodes, %d edges\n", s_gbuf_nodes, s_gbuf_edges);
         } else {
             /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
              */

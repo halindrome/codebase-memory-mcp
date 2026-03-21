@@ -2181,8 +2181,11 @@ TEST(cli_progress_phase_labels) {
      * structure" */
     cbm_log_info("pass.start", "pass", "structure", NULL);
 
-    /* Simulate pipeline.done event. */
-    cbm_log_info("pipeline.done", "nodes", "10", "edges", "5", "elapsed_ms", "42", NULL);
+    /* Simulate gbuf.dump (fires before pipeline.done; carries accurate counts). */
+    cbm_log_info("gbuf.dump", "nodes", "10", "edges", "5", NULL);
+
+    /* Simulate pipeline.done event (nodes= is 0 in production after QN table free). */
+    cbm_log_info("pipeline.done", "nodes", "0", "edges", "5", "elapsed_ms", "42", NULL);
 
     cbm_progress_sink_fini();
 
@@ -2194,11 +2197,10 @@ TEST(cli_progress_phase_labels) {
 
     /* stderr output must contain the phase label, not JSON. */
     ASSERT(strstr(buf, "[1/9]") != NULL);
-    ASSERT(strstr(buf, "Done:") != NULL);
+    /* Done: line uses counts from gbuf.dump, not the stale pipeline.done nodes=0. */
+    ASSERT(strstr(buf, "Done: 10 nodes") != NULL);
 
-    /* stdout is not touched by the progress sink — any JSON result is
-     * independent.  We verify the captured output does NOT start with '{',
-     * confirming the sink did not emit JSON. */
+    /* The captured output must not start with '{' (no JSON from the sink). */
     ASSERT(buf[0] != '{');
 
     PASS();
