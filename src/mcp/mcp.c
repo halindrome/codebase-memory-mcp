@@ -1634,7 +1634,7 @@ static char *handle_get_code_snippet(cbm_mcp_server_t *srv, const char *args) {
     if (!store) {
         free(qn);
         free(project);
-        return cbm_mcp_text_result("no project loaded — run index_repository first", true);
+        return cbm_mcp_text_result("{\"error\":\"no project loaded\"}", true);
     }
 
     char *not_indexed = verify_project_indexed(store, project);
