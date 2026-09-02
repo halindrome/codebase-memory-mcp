@@ -14,6 +14,7 @@
 #include <watcher/watcher.h>
 #include <store/store.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdatomic.h>
 #include <signal.h>
 #include <string.h>
@@ -82,6 +83,57 @@ TEST(poll_interval_small) {
     /* 500 files → 5000 + 1*1000 = 6000ms */
     ms = cbm_watcher_poll_interval_ms(500);
     ASSERT_EQ(ms, 6000);
+    PASS();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+ *  HARD INDEX-FAILURE BACKOFF
+ * ══════════════════════════════════════════════════════════════════ */
+
+TEST(index_backoff_no_failures_keeps_interval) {
+    /* The success and busy-skip paths must be completely unaffected. */
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, 0), 5000);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(60000, 0), 60000);
+    PASS();
+}
+
+TEST(index_backoff_doubles_per_failure) {
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, 1), 10000);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, 2), 20000);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, 3), 40000);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, 4), 80000);
+    PASS();
+}
+
+TEST(index_backoff_reaches_ceiling_and_stays) {
+    /* 5000 << 6 = 320000, above the 5-minute ceiling. The shift is capped
+     * too, so an arbitrarily long failure streak cannot overflow the
+     * intermediate value or wrap back to a short delay. */
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, 6), 300000);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, 100), 300000);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, INT_MAX), 300000);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(60000, INT_MAX), 300000);
+    PASS();
+}
+
+TEST(index_backoff_is_monotonic_and_bounded) {
+    /* The property that actually matters: the delay never decreases as the
+     * streak grows, and never exceeds the ceiling. This is what bounds the
+     * fork rate of a permanently failing project. */
+    int previous = cbm_watcher_index_backoff_ms(5000, 0);
+    for (int failures = 1; failures < 200; failures++) {
+        int delay = cbm_watcher_index_backoff_ms(5000, failures);
+        ASSERT_TRUE(delay >= previous);
+        ASSERT_TRUE(delay <= 300000);
+        previous = delay;
+    }
+    PASS();
+}
+
+TEST(index_backoff_degenerate_inputs) {
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(0, 5), 0);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(-1, 0), 0);
+    ASSERT_EQ(cbm_watcher_index_backoff_ms(5000, -1), 5000);
     PASS();
 }
 
@@ -3143,6 +3195,11 @@ SUITE(watcher) {
     RUN_TEST(poll_interval_scaling);
     RUN_TEST(poll_interval_cap);
     RUN_TEST(poll_interval_small);
+    RUN_TEST(index_backoff_no_failures_keeps_interval);
+    RUN_TEST(index_backoff_doubles_per_failure);
+    RUN_TEST(index_backoff_reaches_ceiling_and_stays);
+    RUN_TEST(index_backoff_is_monotonic_and_bounded);
+    RUN_TEST(index_backoff_degenerate_inputs);
 
     /* Lifecycle */
     RUN_TEST(watcher_create_free);

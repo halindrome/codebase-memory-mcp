@@ -94,6 +94,13 @@ int cbm_watcher_watch_count(cbm_watcher_t *w);
 /* Return the adaptive poll interval (ms) for a given file count. */
 int cbm_watcher_poll_interval_ms(int file_count);
 
+/* Return the delay (ms) before the next index attempt for a project with
+ * `consecutive_failures` consecutive hard index failures. Zero failures
+ * yields `interval_ms` unchanged; each further failure doubles the delay up
+ * to a fixed ceiling, so a permanently failing project stops re-forking a
+ * worker at the poll cadence without ever being abandoned. */
+int cbm_watcher_index_backoff_ms(int interval_ms, int consecutive_failures);
+
 /* Classify a stat() errno observed on a watched project root: returns true
  * only for values that mean the root itself is gone (ENOENT, ENOTDIR) and
  * may count toward stale-root pruning (#286). Any other failure (EACCES,
