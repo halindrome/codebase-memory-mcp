@@ -91,6 +91,13 @@ void cbm_watcher_stop(cbm_watcher_t *w);
 /* Return the number of projects in the watch list. */
 int cbm_watcher_watch_count(cbm_watcher_t *w);
 
+/* Return a watched project's consecutive hard-index-failure count, or -1 when
+ * it is not watched. Exposed because the failure state machine (increment on
+ * a hard error, reset on success) is otherwise unobservable from a test: the
+ * only other thing it feeds is a poll deadline, and gating on that deadline
+ * needs a controllable clock the watcher does not have. */
+int cbm_watcher_index_failure_count(cbm_watcher_t *w, const char *project_name);
+
 /* Return the adaptive poll interval (ms) for a given file count. */
 int cbm_watcher_poll_interval_ms(int file_count);
 

@@ -171,7 +171,15 @@ int cbm_watcher_index_backoff_ms(int interval_ms, int consecutive_failures) {
     int shift =
         consecutive_failures < INDEX_FAIL_SHIFT_MAX ? consecutive_failures : INDEX_FAIL_SHIFT_MAX;
     int64_t delay = (int64_t)interval_ms << shift;
-    return delay > INDEX_FAIL_CEILING_MS ? INDEX_FAIL_CEILING_MS : (int)delay;
+    if (delay > INDEX_FAIL_CEILING_MS) {
+        delay = INDEX_FAIL_CEILING_MS;
+    }
+    /* Backing off must never schedule SOONER than the project's own cadence.
+     * Unreachable today (POLL_MAX_MS < the ceiling), but clamping here keeps
+     * the function monotonic for every input rather than only for the inputs
+     * the current constants can produce — the caller's contract is "a delay
+     * that never shrinks as failures accumulate". */
+    return (int)(delay < interval_ms ? interval_ms : delay);
 }
 
 int cbm_watcher_poll_interval_ms(int file_count) {
@@ -1159,6 +1167,17 @@ void cbm_watcher_touch(cbm_watcher_t *w, const char *project_name) {
         s->next_poll_ns = 0;
     }
     cbm_mutex_unlock(&w->projects_lock);
+}
+
+int cbm_watcher_index_failure_count(cbm_watcher_t *w, const char *project_name) {
+    if (!w || !project_name) {
+        return -1;
+    }
+    cbm_mutex_lock(&w->projects_lock);
+    project_state_t *s = cbm_ht_get(w->projects, project_name);
+    int failures = s ? s->index_failures : -1;
+    cbm_mutex_unlock(&w->projects_lock);
+    return failures;
 }
 
 int cbm_watcher_watch_count(cbm_watcher_t *w) {
