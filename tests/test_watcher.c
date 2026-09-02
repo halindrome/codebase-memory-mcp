@@ -1874,13 +1874,27 @@ TEST(watcher_index_failure_streak_increments_and_resets_issue2015) {
     PASS();
 }
 
-/* The delay WIRE-UP (#2015): a hard failure must actually push the project's
- * next poll out, so a permanently failing project stops re-forking a worker
- * on every cycle. That is this PR's headline behaviour and it is observable
- * without a clock, by simply NOT calling cbm_watcher_touch between polls:
- * touch zeroes next_poll_ns, so a wire-up that never sets a deadline leaves
- * it at 0 and the callback fires on every poll. What still needs a clock is
- * only the delay's MAGNITUDE, not whether gating happens at all. */
+/* The delay WIRE-UP (#2015): a hard failure must leave SOME deadline behind,
+ * so the failing project is not re-polled on the very next cycle. Observable
+ * without a clock by simply not calling cbm_watcher_touch between polls —
+ * touch zeroes next_poll_ns, so a wire-up that never assigns one leaves it at
+ * 0 and the callback fires on every poll.
+ *
+ * Be precise about what this does NOT prove, because it is less than it looks.
+ * The code before this change also assigned a deadline here (the plain
+ * adaptive interval), so this test passes against the unfixed tree: it is a
+ * regression guard on the assignment existing, NOT a demonstration of the
+ * backoff.
+ *
+ * Measured, not assumed: replacing the backoff call with the pre-change
+ * `ctx->now + interval_ms * US_PER_MS` leaves this whole suite green at 82/82.
+ * No test in this file fails when the behavioural change is removed — the
+ * index_backoff_* tests still pass because they exercise the pure function
+ * directly, and the streak tests still pass because the counter is unaffected.
+ * What distinguishes backed-off from plain cadence is the delay's MAGNITUDE,
+ * and observing that needs a controllable clock the watcher does not have, or
+ * a further accessor exposing next_poll_ns. Both were judged out of scope; the
+ * gap is recorded here rather than papered over. */
 TEST(watcher_index_failure_backoff_gates_repolling_issue2015) {
     char tmpdir[256];
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cbm_watcher_gate_XXXXXX");

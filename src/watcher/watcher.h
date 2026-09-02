@@ -98,10 +98,13 @@ int cbm_watcher_watch_count(cbm_watcher_t *w);
  *
  * Memory visibility: this reads under projects_lock, but poll_project WRITES
  * the counter outside that lock — it runs against a state snapshot taken
- * while the lock was held, which is the same discipline every other
- * per-project field in this struct already follows. Reading concurrently with
- * a live poll is therefore formally a data race and may observe a stale
- * value; it is a diagnostic and test accessor, not a synchronisation point.
+ * while the lock was held, which is the same discipline the other
+ * poll-mutated fields here already follow (last_head, last_dirty_sig,
+ * interval_ms, next_poll_ns, missing_root_count). It is NOT the discipline of
+ * every field: active_git is serialized by projects_lock and registered is an
+ * atomic_bool. Reading concurrently with a live poll is therefore formally a
+ * data race and may observe a stale value; it is a diagnostic and test
+ * accessor, not a synchronisation point.
  * Single-threaded callers (the tests, and any caller between poll cycles)
  * always see the current value. Do not build scheduling decisions on it
  * without first giving the counter atomic accessors. */
@@ -112,9 +115,17 @@ int cbm_watcher_poll_interval_ms(int file_count);
 
 /* Return the delay (ms) before the next index attempt for a project with
  * `consecutive_failures` consecutive hard index failures. Zero failures
- * yields `interval_ms` unchanged; each further failure doubles the delay up
- * to a fixed ceiling, so a permanently failing project stops re-forking a
- * worker at the poll cadence without ever being abandoned.
+ * yields `interval_ms` unchanged; each further failure doubles the delay, so
+ * a permanently failing project stops re-forking a worker at the poll cadence
+ * without ever being abandoned.
+ *
+ * Doubling stops at a fixed shift cap, so the delay plateaus at
+ * `interval_ms << INDEX_FAIL_SHIFT_MAX` — which is the ceiling only when
+ * `interval_ms` is large enough to reach it (>= 4688 ms for the current cap
+ * and ceiling). Below that the plateau sits strictly under the ceiling. Every
+ * interval this watcher generates is >= POLL_BASE_MS, so in practice the
+ * ceiling is always reached; the distinction is stated because this is an
+ * exported function and a caller may pass a smaller interval.
  *
  * The result is clamped at BOTH ends: never above the ceiling, and never
  * below `interval_ms`, so backing off can only ever delay the next attempt,
