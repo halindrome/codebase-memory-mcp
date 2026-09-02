@@ -92,10 +92,19 @@ void cbm_watcher_stop(cbm_watcher_t *w);
 int cbm_watcher_watch_count(cbm_watcher_t *w);
 
 /* Return a watched project's consecutive hard-index-failure count, or -1 when
- * it is not watched. Exposed because the failure state machine (increment on
- * a hard error, reset on success) is otherwise unobservable from a test: the
- * only other thing it feeds is a poll deadline, and gating on that deadline
- * needs a controllable clock the watcher does not have. */
+ * it is not watched. Exposed so the failure state machine (increment on a
+ * hard error, reset on success) can be asserted directly rather than inferred
+ * from the poll deadline it feeds.
+ *
+ * Memory visibility: this reads under projects_lock, but poll_project WRITES
+ * the counter outside that lock — it runs against a state snapshot taken
+ * while the lock was held, which is the same discipline every other
+ * per-project field in this struct already follows. Reading concurrently with
+ * a live poll is therefore formally a data race and may observe a stale
+ * value; it is a diagnostic and test accessor, not a synchronisation point.
+ * Single-threaded callers (the tests, and any caller between poll cycles)
+ * always see the current value. Do not build scheduling decisions on it
+ * without first giving the counter atomic accessors. */
 int cbm_watcher_index_failure_count(cbm_watcher_t *w, const char *project_name);
 
 /* Return the adaptive poll interval (ms) for a given file count. */
@@ -105,7 +114,17 @@ int cbm_watcher_poll_interval_ms(int file_count);
  * `consecutive_failures` consecutive hard index failures. Zero failures
  * yields `interval_ms` unchanged; each further failure doubles the delay up
  * to a fixed ceiling, so a permanently failing project stops re-forking a
- * worker at the poll cadence without ever being abandoned. */
+ * worker at the poll cadence without ever being abandoned.
+ *
+ * The result is clamped at BOTH ends: never above the ceiling, and never
+ * below `interval_ms`, so backing off can only ever delay the next attempt,
+ * never bring it forward. That lower clamp matters only for an `interval_ms`
+ * already above the ceiling, which the current constants cannot produce
+ * (POLL_MAX_MS < the ceiling) — it is stated because this is an exported
+ * function and the guarantee should hold for any argument a caller passes,
+ * not only for the ones today's constants generate.
+ *
+ * Negative inputs are treated as zero. */
 int cbm_watcher_index_backoff_ms(int interval_ms, int consecutive_failures);
 
 /* Classify a stat() errno observed on a watched project root: returns true
