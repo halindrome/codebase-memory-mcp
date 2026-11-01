@@ -902,6 +902,12 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
          * own here, and only here (cbm_sqlite_dedicated_heap). */
         cbm_sqlite_dedicated_heap(true);
         cbm_memev_process_role("worker");
+        /* A full index saturates every core; run it below normal priority so
+         * interactive CLI/MCP queries are not starved. Before any indexing
+         * thread exists, so they all inherit it. Failure is harmless. */
+        if (!cbm_lower_cpu_priority()) {
+            cbm_log_info("index.worker.priority", "lowered", "false");
+        }
     }
     cbm_index_set_worker_role_options(index_worker, response_out, worker_single_thread,
                                       worker_marker, worker_quarantine,
@@ -1091,6 +1097,11 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
             exit_code = cbm_cli_mcp_result_is_error(result) ? SKIP_ONE : 0;
         } else {
             exit_code = cli_print_mcp_result(result);
+        }
+        /* One place for both presentations: a gate reading the status must get
+         * the same verdict whether or not the caller asked for --json. */
+        if (tool_name && strcmp(tool_name, "index_repository") == 0) {
+            exit_code = cbm_cli_index_exit_status(result, exit_code);
         }
         exit_code = cbm_cli_exit_status_after_maintenance(exit_code, maintenance_cancelled);
         if (cbm_index_worker_active()) {
